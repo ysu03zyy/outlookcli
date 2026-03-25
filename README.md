@@ -106,6 +106,26 @@ make release-all   # 生成 bin/ 下多架构二进制，见 Makefile
 - 或通过环境变量 / 参数覆盖：`OUTLOOK_CONFIG_DIR`、`--config-dir`
 - 日历默认时区：`OUTLOOK_TIMEZONE` 或 `--timezone`（IANA，如 `Asia/Shanghai`）
 
+## 多用户 / 直接传入 Access Token
+
+不依赖本地 `config.json`、`credentials.json` 时，可用 **环境变量**或**全局参数**直接指定 Microsoft Graph 的 access token（适合多用户、上层系统代发 token、CI 等）：
+
+- **`OUTLOOK_ACCESS_TOKEN`** 或 **`--access-token <token>`**
+- 此模式下**不会**读取凭据文件，也**不会**用 refresh_token 刷新；token 过期（通常约 1 小时）后需自行换新或由调用方重新传入。
+- **`outlookcli token refresh`** 仅适用于配置文件模式；若带了 `--access-token` / `OUTLOOK_ACCESS_TOKEN`，会报错并提示去掉直连 token。
+- **`outlookcli token get`**：直连 token 模式下会把当前使用的 token 原样打印（即你传入的值）。
+
+安全提示：在命令行里写 token 可能被同机用户通过 `ps` 看到；更稳妥的做法是用环境变量注入，或由进程管理器从密钥系统读取后设置 `OUTLOOK_ACCESS_TOKEN`。
+
+示例：
+
+```bash
+export OUTLOOK_ACCESS_TOKEN="eyJ0eX..."
+outlookcli mail inbox -n 5
+
+outlookcli --access-token "$TOKEN" calendar today -z Asia/Shanghai
+```
+
 ## 常用命令示例
 
 ```bash

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/alecthomas/kong"
 
@@ -19,8 +20,10 @@ var Version = "dev"
 // RootFlags are global flags.
 type RootFlags struct {
 	ConfigDir string `name:"config-dir" env:"OUTLOOK_CONFIG_DIR" help:"Config directory (default: ~/.outlook-mcp)"`
-	JSON      bool   `short:"j" help:"Print JSON to stdout"`
-	Timezone  string `name:"timezone" short:"z" env:"OUTLOOK_TIMEZONE" help:"IANA timezone for calendar (default UTC)" default:"UTC"`
+	// AccessToken bypasses config files and refresh; use for multi-user or CI.
+	AccessToken string `name:"access-token" env:"OUTLOOK_ACCESS_TOKEN" help:"Use this Microsoft Graph access token directly (no credentials.json; expires ~1h)"`
+	JSON        bool   `short:"j" help:"Print JSON to stdout"`
+	Timezone    string `name:"timezone" short:"z" env:"OUTLOOK_TIMEZONE" help:"IANA timezone for calendar (default UTC)" default:"UTC"`
 }
 
 // CLI is the root command tree.
@@ -32,7 +35,7 @@ type CLI struct {
 	Token struct {
 		Refresh tokenRefreshCmd `cmd:"" name:"refresh" help:"Refresh OAuth access token"`
 		Test    tokenTestCmd    `cmd:"" name:"test" help:"Test Microsoft Graph connection"`
-		Get     tokenGetCmd     `cmd:"" name:"get" help:"Print current access token (after refresh)"`
+		Get     tokenGetCmd     `cmd:"" name:"get" help:"Print access token (from file after refresh, or echo --access-token)"`
 	} `cmd:"" name:"token" help:"OAuth token helpers"`
 
 	Mail struct {
@@ -71,6 +74,9 @@ type CLI struct {
 type tokenRefreshCmd struct{}
 
 func (tokenRefreshCmd) Run(ctx context.Context, root *RootFlags) error {
+	if strings.TrimSpace(root.AccessToken) != "" {
+		return fmt.Errorf("token refresh uses config files; omit --access-token / OUTLOOK_ACCESS_TOKEN")
+	}
 	dir, err := resolveDir(root)
 	if err != nil {
 		return err
@@ -89,11 +95,10 @@ func (tokenRefreshCmd) Run(ctx context.Context, root *RootFlags) error {
 type tokenTestCmd struct{}
 
 func (tokenTestCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	c, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	c := &graph.Client{Dir: dir, TZName: root.Timezone}
 	total, unread, err := c.TestInbox(ctx)
 	if err != nil {
 		return err
@@ -108,6 +113,10 @@ func (tokenTestCmd) Run(ctx context.Context, root *RootFlags) error {
 type tokenGetCmd struct{}
 
 func (tokenGetCmd) Run(ctx context.Context, root *RootFlags) error {
+	if tok := strings.TrimSpace(root.AccessToken); tok != "" {
+		fmt.Fprintln(os.Stdout, tok)
+		return nil
+	}
 	dir, err := resolveDir(root)
 	if err != nil {
 		return err
@@ -125,11 +134,10 @@ type mailInboxCmd struct {
 }
 
 func (c *mailInboxCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.MailInbox(ctx, c.Count)
 	if err != nil {
 		return err
@@ -142,11 +150,10 @@ type mailUnreadCmd struct {
 }
 
 func (c *mailUnreadCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.MailUnread(ctx, c.Count)
 	if err != nil {
 		return err
@@ -160,11 +167,10 @@ type mailSearchCmd struct {
 }
 
 func (c *mailSearchCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.MailSearch(ctx, c.Query, c.Count)
 	if err != nil {
 		return err
@@ -178,11 +184,10 @@ type mailFromCmd struct {
 }
 
 func (c *mailFromCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.MailFrom(ctx, c.Sender, c.Count)
 	if err != nil {
 		return err
@@ -195,11 +200,10 @@ type mailReadCmd struct {
 }
 
 func (c *mailReadCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	m, err := client.MailRead(ctx, c.ID)
 	if err != nil {
 		return err
@@ -210,11 +214,10 @@ func (c *mailReadCmd) Run(ctx context.Context, root *RootFlags) error {
 type mailFoldersCmd struct{}
 
 func (mailFoldersCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.MailFolders(ctx)
 	if err != nil {
 		return err
@@ -225,11 +228,10 @@ func (mailFoldersCmd) Run(ctx context.Context, root *RootFlags) error {
 type mailStatsCmd struct{}
 
 func (mailStatsCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	m, err := client.MailStats(ctx)
 	if err != nil {
 		return err
@@ -244,11 +246,10 @@ type mailSendCmd struct {
 }
 
 func (c *mailSendCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailSend(ctx, c.To, c.Subject, c.Body); err != nil {
 		return err
 	}
@@ -265,11 +266,10 @@ type mailReplyCmd struct {
 }
 
 func (c *mailReplyCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailReply(ctx, c.ID, c.Body); err != nil {
 		return err
 	}
@@ -285,11 +285,10 @@ type mailMarkReadCmd struct {
 }
 
 func (c *mailMarkReadCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailMarkRead(ctx, c.ID); err != nil {
 		return err
 	}
@@ -301,11 +300,10 @@ type mailMarkUnreadCmd struct {
 }
 
 func (c *mailMarkUnreadCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailMarkUnread(ctx, c.ID); err != nil {
 		return err
 	}
@@ -317,11 +315,10 @@ type mailFlagCmd struct {
 }
 
 func (c *mailFlagCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailFlag(ctx, c.ID); err != nil {
 		return err
 	}
@@ -333,11 +330,10 @@ type mailUnflagCmd struct {
 }
 
 func (c *mailUnflagCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailUnflag(ctx, c.ID); err != nil {
 		return err
 	}
@@ -349,11 +345,10 @@ type mailDeleteCmd struct {
 }
 
 func (c *mailDeleteCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailDelete(ctx, c.ID); err != nil {
 		return err
 	}
@@ -365,11 +360,10 @@ type mailArchiveCmd struct {
 }
 
 func (c *mailArchiveCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailArchive(ctx, c.ID); err != nil {
 		return err
 	}
@@ -382,11 +376,10 @@ type mailMoveCmd struct {
 }
 
 func (c *mailMoveCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.MailMove(ctx, c.ID, c.Folder); err != nil {
 		return err
 	}
@@ -402,11 +395,10 @@ type calEventsCmd struct {
 }
 
 func (c *calEventsCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.CalendarEvents(ctx, c.Count)
 	if err != nil {
 		return err
@@ -417,11 +409,10 @@ func (c *calEventsCmd) Run(ctx context.Context, root *RootFlags) error {
 type calTodayCmd struct{}
 
 func (calTodayCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.CalendarToday(ctx)
 	if err != nil {
 		return err
@@ -432,11 +423,10 @@ func (calTodayCmd) Run(ctx context.Context, root *RootFlags) error {
 type calWeekCmd struct{}
 
 func (calWeekCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.CalendarWeek(ctx)
 	if err != nil {
 		return err
@@ -449,11 +439,10 @@ type calReadCmd struct {
 }
 
 func (c *calReadCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	m, err := client.CalendarRead(ctx, c.ID)
 	if err != nil {
 		return err
@@ -469,11 +458,10 @@ type calCreateCmd struct {
 }
 
 func (c *calCreateCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	m, err := client.CalendarCreate(ctx, c.Subject, c.Start, c.End, c.Location)
 	if err != nil {
 		return err
@@ -487,11 +475,10 @@ type calQuickCmd struct {
 }
 
 func (c *calQuickCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	m, err := client.CalendarQuick(ctx, c.Subject, c.Start)
 	if err != nil {
 		return err
@@ -504,11 +491,10 @@ type calDeleteCmd struct {
 }
 
 func (c *calDeleteCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	if err := client.CalendarDelete(ctx, c.ID); err != nil {
 		return err
 	}
@@ -522,11 +508,10 @@ type calUpdateCmd struct {
 }
 
 func (c *calUpdateCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	m, err := client.CalendarUpdate(ctx, c.ID, c.Field, c.Value)
 	if err != nil {
 		return err
@@ -537,11 +522,10 @@ func (c *calUpdateCmd) Run(ctx context.Context, root *RootFlags) error {
 type calCalsCmd struct{}
 
 func (calCalsCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	rows, err := client.CalendarList(ctx)
 	if err != nil {
 		return err
@@ -555,16 +539,33 @@ type calFreeCmd struct {
 }
 
 func (c *calFreeCmd) Run(ctx context.Context, root *RootFlags) error {
-	dir, err := resolveDir(root)
+	client, err := graphClient(root)
 	if err != nil {
 		return err
 	}
-	client := &graph.Client{Dir: dir, TZName: root.Timezone}
 	m, err := client.CalendarFree(ctx, c.Start, c.End)
 	if err != nil {
 		return err
 	}
 	return emitObject(root, m)
+}
+
+// graphClient builds a Graph client. If --access-token / OUTLOOK_ACCESS_TOKEN is set,
+// that token is used and config files are not read for authentication.
+func graphClient(root *RootFlags) (*graph.Client, error) {
+	tok := strings.TrimSpace(root.AccessToken)
+	if tok == "" {
+		dir, err := resolveDir(root)
+		if err != nil {
+			return nil, err
+		}
+		return &graph.Client{Dir: dir, TZName: root.Timezone}, nil
+	}
+	var dir string
+	if root.ConfigDir != "" {
+		dir = filepath.Clean(root.ConfigDir)
+	}
+	return &graph.Client{Dir: dir, TZName: root.Timezone, AccessToken: tok}, nil
 }
 
 func resolveDir(root *RootFlags) (string, error) {

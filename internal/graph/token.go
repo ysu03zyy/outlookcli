@@ -137,6 +137,9 @@ type Client struct {
 	Dir    string
 	HTTP   *http.Client
 	TZName string // IANA timezone for Prefer: outlook.timezone
+	// AccessToken, if non-empty, is used as the Bearer token for every request.
+	// No refresh and no credentials.json are used (multi-user / ephemeral token mode).
+	AccessToken string
 }
 
 func (c *Client) httpClient() *http.Client {
@@ -147,6 +150,12 @@ func (c *Client) httpClient() *http.Client {
 }
 
 func (c *Client) authHeader(ctx context.Context) (string, error) {
+	if tok := strings.TrimSpace(c.AccessToken); tok != "" {
+		return tok, nil
+	}
+	if strings.TrimSpace(c.Dir) == "" {
+		return "", fmt.Errorf("no access token: set --access-token or OUTLOOK_ACCESS_TOKEN, or use config under ~/.outlook-mcp")
+	}
 	return EnsureAccessToken(ctx, c.Dir)
 }
 
