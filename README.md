@@ -1,0 +1,122 @@
+# outlookcli
+
+在终端通过 [Microsoft Graph](https://learn.microsoft.com/en-us/graph/overview) 访问 Outlook 邮件与日历（需事先完成 OAuth，与 `~/.outlook-mcp` 下的 `config.json` / `credentials.json` 兼容）。
+
+## 环境要求
+
+- **Go**：1.21 及以上（Linux / macOS / Windows 均可编译）
+- **账号配置**：`config.json` 中含 `client_id`、`client_secret`；`credentials.json` 中含 `refresh_token`（可用 Azure CLI 脚本或门户注册应用后授权生成）
+
+## 安装方式
+
+### 1. Homebrew（macOS / Linux 上装了 Homebrew 时）
+
+Homebrew **不会**自动收录个人项目，需要自己建一个 **tap**（小型 formula 仓库），或在本机用本地 formula 安装。
+
+#### 方式 A：自建 tap（适合团队 / 长期分发）
+
+1. 在 GitHub 新建仓库，命名建议为 **`homebrew-outlookcli`**（`homebrew-` 前缀可让 tap 名更短）。
+2. 在本仓库里复制 **`Formula/outlookcli.rb`** 到新仓库的 **`Formula/outlookcli.rb`**。
+3. 用编辑器把 formula 里的 **`homepage`、`head` 的 GitHub 地址**改成 **存放 outlookcli 源码的仓库**（`main` 分支上有 `cmd/outlookcli` 的那个），不是 `homebrew-*` tap 仓库。
+4. 推送 `main` 分支后，在本机执行：
+
+```bash
+brew tap ysu03zyy/outlookcli https://github.com/ysu03zyy/homebrew-outlookcli
+brew update
+brew install --HEAD outlookcli
+```
+
+说明：当前 formula 以 **`head`** 为主（从 `main` 源码用本机 Go 编译），因此需要加 **`--HEAD`**。若你希望 **`brew install outlookcli` 不带 `--HEAD`**，需要在发 **Git tag**（如 `v0.1.0`）后，在 formula 里增加 **`url` + `sha256`**（源码包地址一般为  
+`https://github.com/ysu03zyy/outlookcli/archive/refs/tags/v0.1.0.tar.gz`），校验和可用：
+
+```bash
+curl -sL "https://github.com/ysu03zyy/outlookcli/archive/refs/tags/v0.1.0.tar.gz" | shasum -a 256
+```
+
+把输出填进 formula 的 `sha256` 字段，并取消注释 `url` / `sha256` 两行（见 `Formula/outlookcli.rb` 内注释）。
+
+#### 方式 B：不建 tap，直接用本仓库里的 formula（本地开发）
+
+在克隆了 **outlookcli 源码**的机器上：
+
+```bash
+cd outlookcli
+brew install --HEAD --build-from-source ./Formula/outlookcli.rb
+```
+
+同样需要本机已安装 **Go**（`depends_on "go" => :build`）。
+
+---
+
+### 2. 从本仓库目录安装（推荐本地开发）
+
+模块路径为 **`github.com/ysu03zyy/outlookcli`**。在 `outlookcli` 目录下执行：
+
+```bash
+cd outlookcli
+go mod tidy
+go install ./cmd/outlookcli
+```
+
+若仓库已推送到 GitHub 且为公开仓库，也可在任意目录执行：
+
+```bash
+go install github.com/ysu03zyy/outlookcli/cmd/outlookcli@latest
+```
+
+安装后二进制一般在 **`$(go env GOPATH)/bin`**（例如 `~/go/bin/outlookcli`）。请确保该目录在 **`PATH`** 中：
+
+```bash
+export PATH="$(go env GOPATH)/bin:$PATH"
+# 可写入 ~/.zshrc 或 ~/.bashrc
+```
+
+验证：
+
+```bash
+outlookcli --help
+outlookcli --version
+```
+
+### 3. 指定版本号编译（可选）
+
+```bash
+cd outlookcli
+go build -ldflags "-X main.version=1.0.0" -o outlookcli ./cmd/outlookcli
+sudo mv outlookcli /usr/local/bin/   # 或放到任意在 PATH 中的目录
+```
+
+### 4. 使用 Makefile
+
+```bash
+cd outlookcli
+make install      # go install ./cmd/outlookcli
+make build        # 输出到 bin/outlookcli
+```
+
+交叉编译示例（在 macOS 上生成 Linux 二进制）：
+
+```bash
+make release-all   # 生成 bin/ 下多架构二进制，见 Makefile
+```
+
+## 配置路径
+
+- 默认目录：`~/.outlook-mcp`
+- 或通过环境变量 / 参数覆盖：`OUTLOOK_CONFIG_DIR`、`--config-dir`
+- 日历默认时区：`OUTLOOK_TIMEZONE` 或 `--timezone`（IANA，如 `Asia/Shanghai`）
+
+## 常用命令示例
+
+```bash
+outlookcli token test
+outlookcli mail inbox -n 5
+outlookcli mail read <id后缀>
+outlookcli calendar today --timezone Asia/Shanghai
+```
+
+加 `-j` / `--json` 可输出 JSON，便于脚本解析。
+
+## 与 Outlook skill 脚本的关系
+
+行为与 `outlook-token.sh`、`outlook-mail.sh`、`outlook-calendar.sh` 使用同一套 Graph 与凭据目录；CLI 为跨平台单文件，无需 `bash`/`jq`/`curl`。
