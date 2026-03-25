@@ -106,6 +106,12 @@ make release-all   # 生成 bin/ 下多架构二进制，见 Makefile
 - 或通过环境变量 / 参数覆盖：`OUTLOOK_CONFIG_DIR`、`--config-dir`
 - 日历默认时区：`OUTLOOK_TIMEZONE` 或 `--timezone`（IANA，如 `Asia/Shanghai`）
 
+### Access token 自动刷新（配置文件模式）
+
+使用 `config.json` + `credentials.json` 时，`outlookcli` 通过 **`golang.org/x/oauth2` 的 `TokenSource`** 按需刷新（与 `gogcli` 的思路类似）：在 access token **未过期**时复用磁盘/内存中的 token，**过期后**再用 `refresh_token` 换新，并把新 token 及 **`expiry`** 写回 `credentials.json`。同一进程内多次 Graph 请求共用一个 `TokenSource`，不会在每次请求时都打 token 端点。
+
+`outlookcli token refresh` 仍会**强制**走一轮刷新（与旧版 shell 脚本里“手动刷新”一致）。
+
 ## 多用户 / 直接传入 Access Token
 
 不依赖本地 `config.json`、`credentials.json` 时，可用 **环境变量**或**全局参数**直接指定 Microsoft Graph 的 access token（适合多用户、上层系统代发 token、CI 等）：
@@ -139,4 +145,4 @@ outlookcli calendar today --timezone Asia/Shanghai
 
 ## 与 Outlook skill 脚本的关系
 
-行为与 `outlook-token.sh`、`outlook-mail.sh`、`outlook-calendar.sh` 使用同一套 Graph 与凭据目录；CLI 为跨平台单文件，无需 `bash`/`jq`/`curl`。
+使用同一套 Graph 与 `~/.outlook-mcp` 凭据目录；CLI 为单二进制，无需 `bash`/`jq`/`curl`。与旧脚本「每次调用先 refresh」不同，配置文件模式下 **`outlookcli` 仅在需要时刷新 token**（见上文「Access token 自动刷新」）。

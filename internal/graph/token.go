@@ -10,7 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/ysu03zyy/outlookcli/internal/config"
 )
@@ -106,6 +109,7 @@ func Refresh(ctx context.Context, dir string, app *config.AppConfig) (*Credentia
 	if _, ok := tok["refresh_token"]; !ok {
 		raw["refresh_token"] = creds.RefreshToken
 	}
+	setExpiryFromExpiresIn(raw, tok)
 	if err := SaveCredentials(dir, raw); err != nil {
 		return nil, err
 	}
@@ -116,20 +120,42 @@ func Refresh(ctx context.Context, dir string, app *config.AppConfig) (*Credentia
 	return &out, nil
 }
 
-// EnsureAccessToken refreshes (always, matching shell scripts) and returns a bearer token.
+// EnsureAccessToken returns a valid access token using oauth2.TokenSource
+// (refresh only when expired or missing, like gogcli).
 func EnsureAccessToken(ctx context.Context, dir string) (string, error) {
-	app, err := config.LoadAppConfig(dir)
+	ts, err := BuildTokenSource(ctx, dir)
 	if err != nil {
 		return "", err
 	}
-	creds, err := Refresh(ctx, dir, app)
+	tok, err := ts.Token()
 	if err != nil {
 		return "", err
 	}
-	if creds.AccessToken == "" {
-		return "", fmt.Errorf("no access_token after refresh")
+	if tok.AccessToken == "" {
+		return "", fmt.Errorf("no access_token")
 	}
-	return creds.AccessToken, nil
+	return tok.AccessToken, nil
+}
+
+// setExpiryFromExpiresIn writes RFC3339 expiry into raw when Microsoft returns expires_in (seconds).
+func setExpiryFromExpiresIn(raw map[string]any, tok map[string]any) {
+	var sec float64
+	switch v := tok["expires_in"].(type) {
+	case float64:
+		sec = v
+	case int:
+		sec = float64(v)
+	case json.Number:
+		if f, err := v.Float64(); err == nil {
+			sec = f
+		}
+	default:
+		return
+	}
+	if sec <= 0 {
+		return
+	}
+	raw["expiry"] = time.Now().Add(time.Duration(sec) * time.Second).UTC().Format(time.RFC3339Nano)
 }
 
 // Client is a minimal Microsoft Graph HTTP helper.
@@ -140,6 +166,10 @@ type Client struct {
 	// AccessToken, if non-empty, is used as the Bearer token for every request.
 	// No refresh and no credentials.json are used (multi-user / ephemeral token mode).
 	AccessToken string
+
+	tsOnce sync.Once
+	ts     oauth2.TokenSource
+	tsErr  error
 }
 
 func (c *Client) httpClient() *http.Client {
@@ -149,6 +179,14 @@ func (c *Client) httpClient() *http.Client {
 	return &http.Client{Timeout: 60 * time.Second}
 }
 
+func (c *Client) oauthTokenSource() (oauth2.TokenSource, error) {
+	c.tsOnce.Do(func() {
+		// Use background ctx for token exchange; request ctx can be short-lived.
+		c.ts, c.tsErr = BuildTokenSource(context.Background(), c.Dir)
+	})
+	return c.ts, c.tsErr
+}
+
 func (c *Client) authHeader(ctx context.Context) (string, error) {
 	if tok := strings.TrimSpace(c.AccessToken); tok != "" {
 		return tok, nil
@@ -156,7 +194,18 @@ func (c *Client) authHeader(ctx context.Context) (string, error) {
 	if strings.TrimSpace(c.Dir) == "" {
 		return "", fmt.Errorf("no access token: set --access-token or OUTLOOK_ACCESS_TOKEN, or use config under ~/.outlook-mcp")
 	}
-	return EnsureAccessToken(ctx, c.Dir)
+	ts, err := c.oauthTokenSource()
+	if err != nil {
+		return "", err
+	}
+	tok, err := ts.Token()
+	if err != nil {
+		return "", err
+	}
+	if tok.AccessToken == "" {
+		return "", fmt.Errorf("no access_token")
+	}
+	return tok.AccessToken, nil
 }
 
 func (c *Client) graphGET(ctx context.Context, u string) ([]byte, int, error) {
