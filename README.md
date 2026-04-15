@@ -9,46 +9,50 @@
 
 ## 安装方式
 
-### 1. Homebrew（macOS / Linux 上装了 Homebrew 时）
+### 1. Linux / macOS 一键安装脚本（推荐）
 
-Homebrew **不会**自动收录个人项目，需要自己建一个 **tap**（小型 formula 仓库），或在本机用本地 formula 安装。
-
-#### 方式 A：自建 tap（适合团队 / 长期分发）
-
-1. 在 GitHub 新建仓库，命名建议为 **`homebrew-outlookcli`**（`homebrew-` 前缀可让 tap 名更短）。
-2. 在本仓库里复制 **`Formula/outlookcli.rb`** 到新仓库的 **`Formula/outlookcli.rb`**。
-3. 用编辑器把 formula 里的 **`homepage`、`head` 的 GitHub 地址**改成 **存放 outlookcli 源码的仓库**（`main` 分支上有 `cmd/outlookcli` 的那个），不是 `homebrew-*` tap 仓库。
-4. 推送 `main` 分支后，在本机执行：
+发版后可直接执行：
 
 ```bash
-brew tap ysu03zyy/outlookcli https://github.com/ysu03zyy/homebrew-outlookcli
-brew update
-brew install --HEAD outlookcli
+curl -fsSL https://raw.githubusercontent.com/ysu03zyy/outlookcli/main/install.sh | bash
 ```
 
-说明：当前 formula 以 **`head`** 为主（从 `main` 源码用本机 Go 编译），因此需要加 **`--HEAD`**。若你希望 **`brew install outlookcli` 不带 `--HEAD`**，需要在发 **Git tag**（如 `v0.1.0`）后，在 formula 里增加 **`url` + `sha256`**（源码包地址一般为  
-`https://github.com/ysu03zyy/outlookcli/archive/refs/tags/v0.1.0.tar.gz`），校验和可用：
+脚本会自动：
+
+- 识别平台（`darwin/linux`）和架构（`amd64/arm64`）
+- 下载对应 release 资产：`outlookcli_<version>_<os>_<arch>.tar.gz`
+- 校验 `checksums.txt`
+- 安装到 `/usr/local/bin/outlookcli`
+
+可选环境变量：
 
 ```bash
-curl -sL "https://github.com/ysu03zyy/outlookcli/archive/refs/tags/v0.1.0.tar.gz" | shasum -a 256
+# 安装指定版本（默认 latest）
+OUTLOOKCLI_VERSION=0.1.0 curl -fsSL https://raw.githubusercontent.com/ysu03zyy/outlookcli/main/install.sh | bash
+
+# 安装到自定义目录
+OUTLOOKCLI_INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://raw.githubusercontent.com/ysu03zyy/outlookcli/main/install.sh | bash
 ```
-
-把输出填进 formula 的 `sha256` 字段，并取消注释 `url` / `sha256` 两行（见 `Formula/outlookcli.rb` 内注释）。
-
-#### 方式 B：不建 tap，直接用本仓库里的 formula（本地开发）
-
-在克隆了 **outlookcli 源码**的机器上：
-
-```bash
-cd outlookcli
-brew install --HEAD --build-from-source ./Formula/outlookcli.rb
-```
-
-同样需要本机已安装 **Go**（`depends_on "go" => :build`）。
 
 ---
 
-### 2. 从本仓库目录安装（推荐本地开发）
+### 2. Homebrew（macOS 推荐）
+
+项目不会自动进入 Homebrew core，建议维护一个 tap：
+
+1. 新建仓库（例如 `homebrew-outlookcli`）
+2. 复制本仓库 `Formula/outlookcli.rb` 到 tap 仓库 `Formula/outlookcli.rb`
+3. 按最新 release 的 `checksums.txt` 更新 formula 里的 `version` 与各平台 `sha256`
+4. 用户安装：
+
+```bash
+brew tap ysu03zyy/outlookcli https://github.com/ysu03zyy/homebrew-outlookcli
+brew install outlookcli
+```
+
+---
+
+### 3. 从本仓库目录安装（推荐本地开发）
 
 模块路径为 **`github.com/ysu03zyy/outlookcli`**。在 `outlookcli` 目录下执行：
 
@@ -78,7 +82,7 @@ outlookcli --help
 outlookcli --version
 ```
 
-### 3. 指定版本号编译（可选）
+### 4. 指定版本号编译（可选）
 
 ```bash
 cd outlookcli
@@ -86,7 +90,7 @@ go build -ldflags "-X main.version=1.0.0" -o outlookcli ./cmd/outlookcli
 sudo mv outlookcli /usr/local/bin/   # 或放到任意在 PATH 中的目录
 ```
 
-### 4. 使用 Makefile
+### 5. 使用 Makefile
 
 ```bash
 cd outlookcli
@@ -97,7 +101,25 @@ make build        # 输出到 bin/outlookcli
 交叉编译示例（在 macOS 上生成 Linux 二进制）：
 
 ```bash
-make release-all   # 生成 bin/ 下多架构二进制，见 Makefile
+make release-all   # 生成 bin/ 下多架构二进制
+```
+
+---
+
+### 6. 发布流程（给维护者）
+
+仓库已内置 `.github/workflows/release.yml`。每次推送 tag（如 `v0.1.0`）会自动：
+
+1. 构建四个平台资产（darwin/linux + amd64/arm64）
+2. 打包成 `outlookcli_<version>_<os>_<arch>.tar.gz`
+3. 生成 `checksums.txt`
+4. 上传到 GitHub Release
+
+发布命令示例：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
 ```
 
 ## 配置路径

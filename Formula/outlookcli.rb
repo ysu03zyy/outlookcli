@@ -13,20 +13,33 @@ class Outlookcli < Formula
   desc "Outlook mail and calendar via Microsoft Graph"
   homepage "https://github.com/ysu03zyy/outlookcli"
   license "MIT"
-  head "https://github.com/ysu03zyy/outlookcli.git", branch: "main", shallow: true
+  version "0.1.0"
 
-  # 发版后取消注释并填写 sha256（不要用占位符）：
-  # url "https://github.com/ysu03zyy/outlookcli/archive/refs/tags/v0.1.0.tar.gz"
-  # sha256 "................................"
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/ysu03zyy/outlookcli/releases/download/v#{version}/outlookcli_#{version}_darwin_arm64.tar.gz"
+      sha256 "REPLACE_WITH_DARWIN_ARM64_SHA256"
+    else
+      url "https://github.com/ysu03zyy/outlookcli/releases/download/v#{version}/outlookcli_#{version}_darwin_amd64.tar.gz"
+      sha256 "REPLACE_WITH_DARWIN_AMD64_SHA256"
+    end
+  end
 
-  depends_on "go" => :build
+  on_linux do
+    if Hardware::CPU.arm?
+      url "https://github.com/ysu03zyy/outlookcli/releases/download/v#{version}/outlookcli_#{version}_linux_arm64.tar.gz"
+      sha256 "REPLACE_WITH_LINUX_ARM64_SHA256"
+    else
+      url "https://github.com/ysu03zyy/outlookcli/releases/download/v#{version}/outlookcli_#{version}_linux_amd64.tar.gz"
+      sha256 "REPLACE_WITH_LINUX_AMD64_SHA256"
+    end
+  end
 
   def install
-    ldflags = "-s -w -X main.version=#{version}"
-    system "go", "build", *std_go_args(ldflags: ldflags), "./cmd/outlookcli"
+    bin.install "outlookcli"
   end
 
   test do
-    assert_match "Outlook mail", shell_output("#{bin}/outlookcli --help")
+    assert_match version.to_s, shell_output("#{bin}/outlookcli --version")
   end
 end
